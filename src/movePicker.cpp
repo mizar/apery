@@ -9,8 +9,6 @@ const Score LVATable[PieceTypeNum] = {
 };
 inline Score LVA(const PieceType pt) { return LVATable[pt]; }
 
-struct HasPositiveScore { bool operator () (const MoveStack& ms) { return 0 < ms.score; } };
-
   void insertion_sort(MoveStack* begin, MoveStack* end)
   {
     MoveStack tmp, *p, *q;
@@ -24,81 +22,72 @@ struct HasPositiveScore { bool operator () (const MoveStack& ms) { return 0 < ms
     }
   }
 
-  inline MoveStack* pick_best(MoveStack* begin, MoveStack* end)
+  inline Move pick_best(MoveStack* begin, MoveStack* end)
   {
       std::swap(*begin, *std::max_element(begin, end));
-      return begin;
+      return *begin;
   }
 
-}// namespace
+} // namespace
 
 MovePicker::MovePicker(const Position& p, const Move ttm, const Depth d, Search::Stack* s)
 	: pos(p), ss(s), depth(d)
 {
 	assert(Depth0 < d);
 
-	legalMoves[0].score = INT_MAX; // 番兵のセット
-	cur = endMoves = firstMove();
-	endBadCaptures = legalMoves + MaxLegalMoves - 1;
+	endBadCaptures = moves + MaxLegalMoves - 1;
     Square prevSq = (ss-1)->currentMove.to();
     countermove = pos.thisThread()->counterMoves[pos.piece(prevSq)][prevSq];
 
-    phase = pos.inCheck() ? EvasionSearch : MainSearch;
+    stage = pos.inCheck() ? EvasionSearch : MainSearch;
 
 	ttMove = (!ttm.isNone() && pos.moveIsPseudoLegal(ttm) ? ttm : Move::moveNone());
-	endMoves += (!ttMove.isNone());
+    endMoves += (!ttMove.isNone());
 }
 
 // 静止探索で呼ばれる。
 MovePicker::MovePicker(const Position& p, Move ttm, const Depth d, const Square sq)
-	: pos(p), cur(firstMove()), endMoves(firstMove())
+	: pos(p)
 {
 	assert(d <= Depth0);
-	legalMoves[0].score = INT_MAX; // 番兵のセット
 
 	if (pos.inCheck())
-		phase = QEvasionSearch;
+        stage = QEvasionSearch;
 
 	// todo: ここで Stockfish は qcheck がある。
 
 	else if (DepthQRecaptures < d)
-		phase = QSearch;
+        stage = QSearch;
 
 	else {
-		phase = QRecapture;
+        stage = QRecapture;
 		recaptureSquare = sq;
 		ttm = Move::moveNone();
 	}
 
 	ttMove = (!ttm.isNone() && pos.moveIsPseudoLegal(ttm) ? ttm : Move::moveNone());
-	endMoves += !ttMove.isNone();
+    endMoves += !ttMove.isNone();
 }
 
 MovePicker::MovePicker(const Position& p, const Move ttm, Score th)
-	: pos(p), threshold(th), cur(firstMove()), endMoves(firstMove())
+	: pos(p), threshold(th)
 {
 	assert(!pos.inCheck());
 
-	legalMoves[0].score = INT_MAX; // 番兵のセット
-	phase = ProbCut;
-#if 1
+    stage = ProbCut;
+
     ttMove = !ttm.isNone()
       && pos.moveIsPseudoLegal(ttm)
       && !ttMove.isCapture()
       && pos.see(ttm) > threshold ? ttm : MOVE_NONE;
-#else
-	ttMove = ((!ttm.isNone() && pos.moveIsPseudoLegal(ttm)) ? ttm : Move::moveNone());
 
-	if (!ttMove.isNone() && (!ttMove.isCapture() || pos.see(ttMove) <= captureThreshold))
-		ttMove = Move::moveNone();
-#endif
-	endMoves += !ttMove.isNone();
+    endMoves += !ttMove.isNone();
 }
 
 void MovePicker::scoreCaptures() {
-	for (MoveStack* it = cur; it != endMoves; ++it) {
-		const Move move = it->move;
-		it->score = Position::pieceScore(pos.piece(move.to())) - LVA(move.pieceTypeFrom());
+	for (auto& m : *this) {
+		const Move move = m;
+		m.score = Position::pieceScore(pos.piece(move.to())) - LVA(move.pieceTypeFrom());
 	}
 }
 
@@ -109,183 +98,167 @@ template <bool IsDrop> void MovePicker::scoreNonCapturesMinusPro() {
   const CounterMoveStats* fm = (ss-2)->counterMoves;
   const CounterMoveStats* f2 = (ss-4)->counterMoves;
 
-	for (MoveStack* it = cur; it != endMoves; ++it) {
-		const Move m = it->move;
-#if 1
-        it->score = history[pos.moved_piece(m)][m.to()]
-          + (cm ? (*cm)[pos.moved_piece(m)][m.to()] : ScoreZero)
-          + (fm ? (*fm)[pos.moved_piece(m)][m.to()] : ScoreZero)
-          + (f2 ? (*f2)[pos.moved_piece(m)][m.to()] : ScoreZero);
-#else
-        //Piece pc = colorAndPieceTypeToPiece(pos.turn(), (IsDrop ? move.pieceTypeDropped() : move.pieceTypeFrom()));
-		it->score = history.value(IsDrop, pos.moved_piece(move), move.to())
-          + (*counterMoveHistory).value(IsDrop, pos.moved_piece(move), move.to());
-#endif
+	for (auto& m : *this) {
+		const Move move = m;
+
+        m.score = history[pos.moved_piece(move)][move.to()]
+          + (cm ? (*cm)[pos.moved_piece(move)][move.to()] : ScoreZero)
+          + (fm ? (*fm)[pos.moved_piece(move)][move.to()] : ScoreZero)
+          + (f2 ? (*f2)[pos.moved_piece(move)][move.to()] : ScoreZero);
 	}
 }
 
 void MovePicker::scoreEvasions() {
   const HistoryStats& history = pos.thisThread()->history;
 
-	for (MoveStack* it = cur; it != endMoves; ++it) {
-		const Move move = it->move;
+	for (auto& m : *this) {
+		const Move move = m;
 		const Score seeScore = pos.seeSign(move);
 		if (seeScore < 0)
-			it->score = seeScore - HistoryStats::Max;
+			m.score = seeScore - HistoryStats::Max;
 		else if (move.isCaptureOrPromotion()) {
-			it->score = pos.capturePieceScore(pos.piece(move.to())) + HistoryStats::Max;
+			m.score = pos.capturePieceScore(pos.piece(move.to())) + HistoryStats::Max;
 			if (move.isPromotion()) {
 				const PieceType pt = pieceToPieceType(pos.piece(move.from()));
-				it->score += pos.promotePieceScore(pt);
+				m.score += pos.promotePieceScore(pt);
 			}
 		}
 		else
 			//it->score = history.value(move.isDrop(), colorAndPieceTypeToPiece(pos.turn(), move.pieceTypeFromOrDropped()), move.to());
-          it->score = history.value(move.isDrop(), pos.moved_piece(move), move.to());
+            m.score = history.value(move.isDrop(), pos.moved_piece(move), move.to());
 	}
 }
 
-void MovePicker::goNextPhase() {
-	cur = firstMove(); // legalMoves_[0] は番兵
-	++phase;
+void MovePicker::generate_next_stage() {
 
-	switch (phase) {
+    assert(stage != PH_Stop);
+
+    cur = moves;
+
+	switch (++stage) {
+
 	case PH_TacticalMoves0: case PH_TacticalMoves1:
-		endMoves = generateMoves<CapturePlusPro>(cur, pos);
+        endMoves = generateMoves<CapturePlusPro>(cur, pos);
 		scoreCaptures();
-		return;
+        break;
 
 	case PH_Killers:
-		cur = killerMoves;
-		endMoves = cur + 2;
-
-        killerMoves[0].move = ss->killers[0];
-        killerMoves[1].move = ss->killers[1];
-        killerMoves[2].move = countermove;
+        killerMoves[0] = ss->killers[0];
+        killerMoves[1] = ss->killers[1];
+        killerMoves[2] = countermove;
         cur = killerMoves;
         endMoves = cur + 2 + (countermove != killerMoves[0] && countermove != killerMoves[1]);
+        break;
 
-		return;
-
-	case PH_NonTacticalMoves0:
-		endMoves = generateMoves<NonCaptureMinusPro>(cur, pos);
+	case PH_NonTacticalMoves:
+        endMoves = generateMoves<NonCaptureMinusPro>(cur, pos);
 		scoreNonCapturesMinusPro<false>();
 		cur = endMoves;
-		lastNonCapture = endMoves = generateMoves<Drop>(cur, pos);
+		endMoves = generateMoves<Drop>(cur, pos);
 		scoreNonCapturesMinusPro<true>();
-		cur = firstMove();
-		endMoves = std::partition(cur, lastNonCapture, HasPositiveScore());
-		// 要素数は10個くらいまでであることが多い。要素数が少ないので、insertionSort() を使用する。
-		insertion_sort(cur, endMoves);
-		return;
-
-	case PH_NonTacticalMoves1:
-		cur = endMoves;
-		endMoves = lastNonCapture;
-		if (static_cast<Depth>(3 * OnePly) <= depth)
-          insertion_sort(cur, endMoves); //std::sort(cur, end, std::greater<MoveStack>());
-		return;
+		cur = moves;
+        if (depth < static_cast<Depth>(3 * OnePly))
+        {
+            MoveStack* goodQuiet = std::partition(cur, endMoves, [](const MoveStack& m)
+                                                 { return m.score > ScoreZero; });
+            insertion_sort(cur, goodQuiet);
+        }
+        else
+            insertion_sort(cur, endMoves);
+        break;
 
 	case PH_BadCaptures:
-		cur = legalMoves + MaxLegalMoves - 1;
-		endMoves = endBadCaptures;
-		return;
+		cur = moves + MaxLegalMoves - 1;
+        endMoves = endBadCaptures;
+        break;
 
-	case PH_Evasions:
-	case PH_QEvasions:
-		endMoves = generateMoves<Evasion>(cur, pos);
-		if (cur + 1 < endMoves)
+	case PH_Evasions: case PH_QEvasions:
+        endMoves = generateMoves<Evasion>(cur, pos);
+		if (endMoves - moves > 1)
 			scoreEvasions();
-		return;
+        break;
 
 	case PH_QCaptures0:
-		endMoves = generateMoves<CapturePlusPro>(firstMove(), pos);
+        endMoves = generateMoves<CapturePlusPro>(moves, pos);
 		scoreCaptures();
-		return;
+        break;
 
 	case PH_QCaptures1:
-		endMoves = generateMoves<Recapture>(firstMove(), pos, recaptureSquare);
+        endMoves = generateMoves<Recapture>(moves, pos, recaptureSquare);
 		scoreCaptures();
-		return;
+        break;
 
-	case EvasionSearch: case QSearch: case QEvasionSearch: case QRecapture: case ProbCut:
+    case EvasionSearch: case QSearch: case QEvasionSearch: case QRecapture: case ProbCut: case PH_Stop:
 		// これが無いと、MainSearch の後に EvasionSearch が始まったりしてしまう。
-		phase = PH_Stop;
-
-	case PH_Stop:
-		endMoves = cur + 1;
-		return;
+        stage = PH_Stop;
+        break;
 
 	default: UNREACHABLE;
 	}
 }
 
 Move MovePicker::nextMove() {
-	MoveStack* ms;
 	Move move;
-	do {
+	
+    while (true)
+    {
 		// end() に達したら次の phase に移る。
-		while (cur == endMoves && phase != PH_Stop)
-			goNextPhase();
+		while (cur == endMoves && stage != PH_Stop)
+            generate_next_stage();
 
-		switch (phase) {
+		switch (stage) {
 
 		case MainSearch: case EvasionSearch: case QSearch: case QEvasionSearch: case ProbCut:
 			++cur;
 			return ttMove;
 
 		case PH_TacticalMoves0:
-			ms = pick_best(cur++, endMoves);
-			if (ms->move != ttMove) {
-				if (ScoreZero <= pos.see(ms->move))
-					return ms->move;
+			move = pick_best(cur++, endMoves);
+			if (move != ttMove) {
+				if (ScoreZero <= pos.see(move))
+					return move;
 
 				// 後ろから SEE の点数が高い順に並ぶようにする。
-				(endBadCaptures--)->move = ms->move;
+				*endBadCaptures-- = move;
 			}
 			break;
 
 		case PH_Killers:
-			move = (cur++)->move;
+			move = *cur++;
 			if (!move.isNone()
 				&& move != ttMove
 				&& pos.moveIsPseudoLegal(move, true)
 				&& pos.piece(move.to()) == Empty)
-			{
 				return move;
-			}
 			break;
 
-		case PH_NonTacticalMoves0:
-		case PH_NonTacticalMoves1:
-			move = (cur++)->move;
+		case PH_NonTacticalMoves:
+			move = *cur++;
 			if (move != ttMove
-				&& move != killerMoves[0].move
-                && move != killerMoves[1].move
-                && move != killerMoves[2].move)
-			{
+				&& move != killerMoves[0]
+                && move != killerMoves[1]
+                && move != killerMoves[2])
 				return move;
-			}
 			break;
 
 		case PH_BadCaptures:
-			return (cur--)->move;
+			return *cur--;
 
 		case PH_Evasions: case PH_QEvasions: case PH_QCaptures0:
-			move = pick_best(cur++, endMoves)->move;
+			move = pick_best(cur++, endMoves);
 			if (move != ttMove)
 				return move;
 			break;
 
 		case PH_TacticalMoves1:
-			ms = pick_best(cur++, endMoves);
+			move = pick_best(cur++, endMoves);
 			// todo: see が確実に駒打ちじゃないから、内部で駒打ちか判定してるのは少し無駄。
-			if (ms->move != ttMove && threshold < pos.see(ms->move))
-				return ms->move;
+			if (move != ttMove && threshold < pos.see(move))
+				return move;
 			break;
 
 		case PH_QCaptures1:
-			move = pick_best(cur++, endMoves)->move;
+			move = pick_best(cur++, endMoves);
 			assert(move.to() == recaptureSquare);
 			return move;
 
@@ -295,5 +268,5 @@ Move MovePicker::nextMove() {
 		default:
 			UNREACHABLE;
 		}
-	} while (true);
+	}
 }

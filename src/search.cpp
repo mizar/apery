@@ -697,7 +697,7 @@ void Thread::search() {
 
 				if (Signals.stop)
 					break;
-#if 1
+#if 0
 				if (mainThread
                   && MultiPV == 1
                   && (bestScore <= alpha || bestScore >= beta)
@@ -736,7 +736,7 @@ void Thread::search() {
 			insertionSort(rootMoves.begin(), rootMoves.begin() + pvIdx + 1);
 
             if (!mainThread)
-              break;
+              continue;
 
             if (Signals.stop)
             {
@@ -748,7 +748,7 @@ void Thread::search() {
             else if ((pvIdx + 1 == MultiPV
                 || 3000 < Time.elapsed())
 				// 将棋所のコンソールが詰まるのを防ぐ。
-				&& (rootDepth < 4 || lastInfoTime + 200 < Time.elapsed()))
+				&& (rootDepth < 20 || lastInfoTime + 200 < Time.elapsed()))
 			{
 				lastInfoTime = Time.elapsed();
 				SYNCCOUT << pvInfoToUSI(rootPos, rootDepth, alpha, beta) << SYNCENDL;
@@ -837,7 +837,7 @@ Score search(Position& pos, Stack* ss, Score alpha, Score beta, const Depth dept
     const bool rootNode = PvNode && (ss - 1)->ply == 0;
 
 	assert(-ScoreInfinite <= alpha && alpha < beta && beta <= ScoreInfinite);
-	assert(PVNode || (alpha == beta - 1));
+	assert(PvNode || (alpha == beta - 1));
 	assert(Depth0 < depth && depth < DepthMax);
 
 	// 途中で goto を使用している為、先に全部の変数を定義しておいた方が安全。
@@ -1046,7 +1046,7 @@ Score search(Position& pos, Stack* ss, Score alpha, Score beta, const Depth dept
 				return nullScore;
 
 			ss->skipEarlyPruning = true;
-			assert(Depth0 < depth - reduction);
+			assert(Depth0 < depth - R);
 			const Score s = depth-R < OnePly ? 
                qsearch<NonPV, false>(pos, ss, beta-1, beta, Depth0)
               : search<NonPV>(pos, ss, beta-1, beta, depth-R, false);
@@ -1620,7 +1620,7 @@ bool RootMove::extract_ponder_from_tt(Position& pos)
 
     pos.doMove(pv[0], st);
     TTEntry* tte = TT.probe(pos.getKey(), ttHit);
-    pos.undoMove(pv[0]);
+    //pos.undoMove(pv[0]);
 
     if (tte != nullptr)
     {
@@ -1631,4 +1631,3 @@ bool RootMove::extract_ponder_from_tt(Position& pos)
 
     return false;
 }
-

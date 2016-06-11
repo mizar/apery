@@ -5,8 +5,8 @@
 #include "position.hpp"
 #include "search.hpp"
 
-enum GenerateMovePhase {
-	MainSearch, PH_TacticalMoves0, PH_Killers, PH_NonTacticalMoves0, PH_NonTacticalMoves1, PH_BadCaptures,
+enum Stages {
+	MainSearch, PH_TacticalMoves0, PH_Killers, PH_NonTacticalMoves, PH_BadCaptures,
 	EvasionSearch, PH_Evasions,
 	QSearch, PH_QCaptures0,
 	QEvasionSearch, PH_QEvasions,
@@ -14,7 +14,7 @@ enum GenerateMovePhase {
 	QRecapture, PH_QCaptures1,
 	PH_Stop
 };
-OverloadEnumOperators(GenerateMovePhase); // ++phase_ の為。
+OverloadEnumOperators(Stages); // ++stage の為。
 
 
 template<typename T, bool CM = false>
@@ -64,9 +64,9 @@ private:
 	void scoreCaptures();
 	template <bool IsDrop> void scoreNonCapturesMinusPro();
 	void scoreEvasions();
-	void goNextPhase();
-
-	MoveStack* firstMove() { return &legalMoves[1]; } // [0] は番兵
+	void generate_next_stage();
+    MoveStack* begin() { return moves; }
+    MoveStack* end() { return endMoves; }
 
 	const Position& pos;
     const Search::Stack* ss;
@@ -76,13 +76,12 @@ private:
 	MoveStack killerMoves[3];
 	Square recaptureSquare;
 	Score threshold; // int で良いのか？
-	GenerateMovePhase phase;
-	MoveStack* cur;
-	MoveStack* endMoves;
-	MoveStack* lastNonCapture;
+    Stages stage;
 	MoveStack* endBadCaptures;
 	// std::array にした方が良さそう。
-	MoveStack legalMoves[MaxLegalMoves];
+	MoveStack moves[MaxLegalMoves];
+    MoveStack* cur = moves;
+    MoveStack* endMoves = moves;
 };
 
 #endif // #ifndef APERY_MOVEPICKER_HPP
