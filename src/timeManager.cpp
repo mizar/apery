@@ -2,6 +2,7 @@
 #include "search.hpp"
 #include "usi.hpp"
 #include "timeManager.hpp"
+#include <float.h>
 
 TimeManagement Time; // Our global time management object
 

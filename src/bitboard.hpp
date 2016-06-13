@@ -20,9 +20,7 @@ public:
 	}
 #endif
 	Bitboard() {}
-	Bitboard(const u64 v0, const u64 v1) {
-		this->p_[0] = v0;
-		this->p_[1] = v1;
+	constexpr Bitboard(const u64 v0, const u64 v1) : p_{ v0, v1 }{
 	}
 	u64 p(const int index) const { return p_[index]; }
 	void set(const int index, const u64 val) { p_[index] = val; }
